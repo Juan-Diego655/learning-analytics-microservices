@@ -1,0 +1,409 @@
+# =============================================================================
+# Learning Analytics Microservices · Docker Compose
+# =============================================================================
+# Levanta toda la infraestructura del sistema:
+#   - 6 PostgreSQL (uno por microservicio, patrón Database per Service)
+#   - 1 RabbitMQ con management UI (bus de comandos y eventos derivados)
+#   - 1 Kafka en modo KRaft (bus de eventos crudos, simbólico)
+#   - 1 Redis (cache + colas Horizon)
+#   - 6 microservicios Laravel (placeholders por ahora, se reemplazan en D1-D6)
+#
+# Uso:
+#   docker compose up --build       Levanta todo
+#   docker compose up -d            En background
+#   docker compose ps               Ver estado de contenedores y health
+#   docker compose logs -f <svc>    Ver logs de un servicio
+#   docker compose down             Detener todo (preserva volúmenes)
+#   docker compose down -v          Detener y borrar volúmenes (reset completo)
+# =============================================================================
+
+name: learning-analytics
+
+# -----------------------------------------------------------------------------
+# REDES
+# -----------------------------------------------------------------------------
+# internal-net: bases de datos, mensajería, cache. NO accesibles desde el host.
+# services-net: microservicios aplicativos. Expuestos al host por puertos 8000-8005.
+# Los servicios Laravel están en AMBAS redes para poder hablar con infra interna.
+# -----------------------------------------------------------------------------
+networks:
+  internal-net:
+    driver: bridge
+  services-net:
+    driver: bridge
+
+# -----------------------------------------------------------------------------
+# VOLÚMENES
+# -----------------------------------------------------------------------------
+# Volúmenes nombrados: persisten datos entre `down` y `up`.
+# Para reset total: `docker compose down -v`
+# -----------------------------------------------------------------------------
+volumes:
+  pgdata-gateway:
+  pgdata-identity:
+  pgdata-ingestion:
+  pgdata-telemetry:
+  pgdata-alerting:
+  pgdata-notification:
+  rabbitmq-data:
+  kafka-data:
+  redis-data:
+
+# =============================================================================
+# SERVICIOS
+# =============================================================================
+services:
+
+  # ===========================================================================
+  # BLOQUE A · INFRAESTRUCTURA DE DATOS
+  # ===========================================================================
+  # 6 instancias PostgreSQL independientes (Database per Service estricto)
+  # + 1 Redis compartido (cache transversal, no es DB de negocio)
+  # ===========================================================================
+
+  db-gateway:
+    image: postgres:17-alpine
+    container_name: db-gateway
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gateway_db
+      POSTGRES_USER: gateway_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD_GATEWAY:-gateway_pass}
+    volumes:
+      - pgdata-gateway:/var/lib/postgresql/data
+    ports:
+      # Único Postgres expuesto al host (para debugging con DBeaver/pgAdmin).
+      # En producción NINGUNA DB se expondría al exterior.
+      - "5433:5432"
+    networks:
+      - internal-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway_user -d gateway_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db-identity:
+    image: postgres:17-alpine
+    container_name: db-identity
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: identity_db
+      POSTGRES_USER: identity_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD_IDENTITY:-identity_pass}
+    volumes:
+      - pgdata-identity:/var/lib/postgresql/data
+    networks:
+      - internal-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U identity_user -d identity_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db-ingestion:
+    image: postgres:17-alpine
+    container_name: db-ingestion
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ingestion_db
+      POSTGRES_USER: ingestion_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD_INGESTION:-ingestion_pass}
+    volumes:
+      - pgdata-ingestion:/var/lib/postgresql/data
+    networks:
+      - internal-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ingestion_user -d ingestion_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db-telemetry:
+    image: postgres:17-alpine
+    container_name: db-telemetry
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: telemetry_db
+      POSTGRES_USER: telemetry_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD_TELEMETRY:-telemetry_pass}
+    volumes:
+      - pgdata-telemetry:/var/lib/postgresql/data
+    networks:
+      - internal-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry_user -d telemetry_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db-alerting:
+    image: postgres:17-alpine
+    container_name: db-alerting
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: alerting_db
+      POSTGRES_USER: alerting_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD_ALERTING:-alerting_pass}
+    volumes:
+      - pgdata-alerting:/var/lib/postgresql/data
+    networks:
+      - internal-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alerting_user -d alerting_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db-notification:
+    image: postgres:17-alpine
+    container_name: db-notification
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: notification_db
+      POSTGRES_USER: notification_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD_NOTIFICATION:-notification_pass}
+    volumes:
+      - pgdata-notification:/var/lib/postgresql/data
+    networks:
+      - internal-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notification_user -d notification_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - internal-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================================================
+  # BLOQUE B · MENSAJERÍA
+  # ===========================================================================
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-noctua}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-noctua_pass}
+    ports:
+      # 5672 = AMQP (los servicios se conectan por aquí)
+      # 15672 = Management UI (browser, http://localhost:15672)
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - internal-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  kafka:
+    image: confluentinc/cp-kafka:7.7.1
+    container_name: kafka
+    restart: unless-stopped
+    environment:
+      # KRaft mode (sin Zookeeper)
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Listeners: PLAINTEXT interno para servicios, EXTERNAL para host
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Auto-creación de topics (cómodo en desarrollo)
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    ports:
+      - "9094:9094"  # Expuesto al host (kafka-console-consumer desde laptop)
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - internal-net
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
+  # ===========================================================================
+  # BLOQUE C · MICROSERVICIOS LARAVEL (placeholders)
+  # ===========================================================================
+  # Por ahora usan nginx:alpine como placeholder para validar que el compose
+  # arranca limpio. En el siguiente paso de D1 los reemplazamos por los
+  # Dockerfiles reales con php:8.4-fpm + Laravel.
+  #
+  # Cada placeholder sirve una página HTML estática en /health que responde 200.
+  # ===========================================================================
+
+  la-gateway:
+    image: nginx:alpine
+    container_name: la-gateway
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+    volumes:
+      - ./docker/placeholder-nginx/gateway.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/placeholder-nginx/health.html:/usr/share/nginx/html/health:ro
+    networks:
+      - internal-net
+      - services-net
+    depends_on:
+      db-gateway:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/health > /dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  la-identity:
+    image: nginx:alpine
+    container_name: la-identity
+    restart: unless-stopped
+    ports:
+      - "8001:80"
+    volumes:
+      - ./docker/placeholder-nginx/identity.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/placeholder-nginx/health.html:/usr/share/nginx/html/health:ro
+    networks:
+      - internal-net
+      - services-net
+    depends_on:
+      db-identity:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/health > /dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  la-ingestion:
+    image: nginx:alpine
+    container_name: la-ingestion
+    restart: unless-stopped
+    ports:
+      - "8002:80"
+    volumes:
+      - ./docker/placeholder-nginx/ingestion.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/placeholder-nginx/health.html:/usr/share/nginx/html/health:ro
+    networks:
+      - internal-net
+      - services-net
+    depends_on:
+      db-ingestion:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/health > /dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  la-telemetry:
+    image: nginx:alpine
+    container_name: la-telemetry
+    restart: unless-stopped
+    ports:
+      - "8003:80"
+    volumes:
+      - ./docker/placeholder-nginx/telemetry.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/placeholder-nginx/health.html:/usr/share/nginx/html/health:ro
+    networks:
+      - internal-net
+      - services-net
+    depends_on:
+      db-telemetry:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/health > /dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  la-alerting:
+    image: nginx:alpine
+    container_name: la-alerting
+    restart: unless-stopped
+    ports:
+      - "8004:80"
+    volumes:
+      - ./docker/placeholder-nginx/alerting.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/placeholder-nginx/health.html:/usr/share/nginx/html/health:ro
+    networks:
+      - internal-net
+      - services-net
+    depends_on:
+      db-alerting:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/health > /dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  la-notification:
+    image: nginx:alpine
+    container_name: la-notification
+    restart: unless-stopped
+    ports:
+      - "8005:80"
+    volumes:
+      - ./docker/placeholder-nginx/notification.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/placeholder-nginx/health.html:/usr/share/nginx/html/health:ro
+    networks:
+      - internal-net
+      - services-net
+    depends_on:
+      db-notification:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/health > /dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
