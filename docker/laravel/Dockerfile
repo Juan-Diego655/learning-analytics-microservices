@@ -25,7 +25,9 @@ RUN apk add --no-cache \
     autoconf \
     g++ \
     make \
-    linux-headers
+    linux-headers \
+    librdkafka-dev \
+    pkgconfig
 
 # Extensiones PHP necesarias para Laravel + Postgres + Redis
 RUN docker-php-ext-install \
@@ -41,6 +43,10 @@ RUN docker-php-ext-install \
 # Redis vía PECL
 RUN pecl install redis \
     && docker-php-ext-enable redis
+
+# rdkafka via PECL (publicar/consumir Kafka desde Laravel)
+RUN pecl install rdkafka \
+    && docker-php-ext-enable rdkafka
 
 # Composer (desde imagen oficial)
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer

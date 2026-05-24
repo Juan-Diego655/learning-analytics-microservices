@@ -324,30 +324,37 @@ services:
       start_period: 30s
 
   la-ingestion:
-    image: nginx:alpine
+    build:
+      context: .
+      dockerfile: docker/laravel/Dockerfile
     container_name: la-ingestion
     restart: unless-stopped
+    environment:
+      SERVICE_NAME: ingestion
+      DB_HOST: db-ingestion
+      DB_PORT: 5432
     ports:
       - "8002:80"
     volumes:
-      - ./docker/placeholder-nginx/ingestion.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./docker/placeholder-nginx/health.html:/usr/share/nginx/html/health:ro
+      - ./services/event-ingestion:/var/www/html
     networks:
       - internal-net
       - services-net
     depends_on:
       db-ingestion:
         condition: service_healthy
-      rabbitmq:
+      redis:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/health > /dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 30s
 
   la-telemetry:
     image: nginx:alpine
@@ -422,3 +429,25 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+      # ===========================================================================
+  # SIMULADOR LMS (cliente sintetico, no es microservicio)
+  # ===========================================================================
+  simulator-lms:
+    build:
+      context: .
+      dockerfile: services/simulator-lms/Dockerfile
+    container_name: simulator-lms
+    restart: "no"  # No queremos que reinicie solo; es un script que ejecutamos a demanda
+    environment:
+      INGESTION_BASE_URL: http://la-ingestion
+      SIMULATOR_INSTITUTION_ID: "2785a692-1ccc-44e3-bb3b-839018538a01"
+      SIMULATOR_INTERVAL_SECONDS: "2"
+      PYTHONUNBUFFERED: "1"
+    networks:
+      - services-net
+    depends_on:
+      la-ingestion:
+        condition: service_healthy
+    profiles:
+      - simulator
