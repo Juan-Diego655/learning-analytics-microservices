@@ -357,21 +357,26 @@ services:
       start_period: 30s
 
   la-telemetry:
-    image: nginx:alpine
+    build:
+      context: .
+      dockerfile: docker/laravel/Dockerfile
     container_name: la-telemetry
     restart: unless-stopped
+    environment:
+      SERVICE_NAME: telemetry
+      DB_HOST: db-telemetry
+      DB_PORT: 5432
     ports:
       - "8003:80"
     volumes:
-      - ./docker/placeholder-nginx/telemetry.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./docker/placeholder-nginx/health.html:/usr/share/nginx/html/health:ro
+      - ./services/telemetry-processing:/var/www/html
     networks:
       - internal-net
       - services-net
     depends_on:
       db-telemetry:
         condition: service_healthy
-      rabbitmq:
+      redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
@@ -380,7 +385,28 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 30s
+
+  la-telemetry-worker:
+    build:
+      context: .
+      dockerfile: docker/laravel/Dockerfile
+    container_name: la-telemetry-worker
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: telemetry-worker
+      DB_HOST: db-telemetry
+      DB_PORT: 5432
+    volumes:
+      - ./services/telemetry-processing:/var/www/html
+    networks:
+      - internal-net
+    depends_on:
+      la-telemetry:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    command: ["php", "artisan", "kafka:consume-events"]
 
   la-alerting:
     image: nginx:alpine
