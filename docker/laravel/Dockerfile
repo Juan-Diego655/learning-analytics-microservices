@@ -38,7 +38,8 @@ RUN docker-php-ext-install \
     intl \
     opcache \
     pcntl \
-    zip
+    zip \
+    sockets
 
 # Redis vía PECL
 RUN pecl install redis \
