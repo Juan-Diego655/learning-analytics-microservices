@@ -38,13 +38,13 @@
 }
 
 :root {
-  --background: hsl(240 14% 6%);
+  --background: hsl(240 10% 4%);
   --foreground: hsl(210 20% 95%);
 
-  --card: hsl(240 14% 11%);
+  --card: hsl(240 10% 9%);
   --card-foreground: hsl(210 20% 95%);
 
-  --popover: hsl(240 14% 11%);
+  --popover: hsl(240 10% 9%);
   --popover-foreground: hsl(210 20% 95%);
 
   --primary: hsl(239 84% 67%);
@@ -54,7 +54,7 @@
   --secondary-foreground: hsl(210 20% 95%);
 
   --muted: hsl(240 5% 18%);
-  --muted-foreground: hsl(240 5% 65%);
+  --muted-foreground: hsl(240 5% 75%);
 
   --accent: hsl(263 70% 60%);
   --accent-foreground: hsl(0 0% 100%);

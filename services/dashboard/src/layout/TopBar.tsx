@@ -1,11 +1,9 @@
-import { Bell } from 'lucide-react';
+// src/components/topbar/TopBar.tsx
 import { useLocation } from 'react-router-dom';
-import { useActiveCriticalIncidents } from '../hooks/useActiveCriticalIncidents';
-import { Button } from '@/components/ui/button';
+import NotificationBell from '../components/topbar/NotificationBell';
 
 export default function TopBar() {
   const location = useLocation();
-  const { count } = useActiveCriticalIncidents();
 
   const getTitle = () => {
     const path = location.pathname;
@@ -18,17 +16,13 @@ export default function TopBar() {
   };
 
   return (
-    <header className="h-14 border-b border-border bg-gradient-to-r from-[#151226] via-card/80 to-card backdrop-blur flex items-center justify-between px-6 sticky top-0 z-10 shrink-0">
+    // CAMBIO: Se subió el z-10 a z-40 para evitar que los elementos del dashboard se encimen sobre el dropdown
+    <header className="h-14 border-b border-border bg-gradient-to-r from-[#151226] via-card/80 to-card backdrop-blur flex items-center justify-between px-6 sticky top-0 z-40 shrink-0">
       <div className="flex items-center gap-4">
         <h2 className="text-sm font-semibold text-foreground tracking-wide">{getTitle()}</h2>
       </div>
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" className="relative h-9 w-9">
-          <Bell size={16} className="text-muted-foreground" />
-          {count > 0 && (
-            <span className="absolute top-2 right-2 w-2 h-2 bg-destructive rounded-full animate-pulse border border-card" />
-          )}
-        </Button>
+        <NotificationBell />
       </div>
     </header>
   );
