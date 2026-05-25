@@ -1,0 +1,603 @@
+{
+  "info": {
+    "name": "Learning Analytics Microservices",
+    "description": "Colección completa de la API REST de la plataforma de Learning Analytics.\n\n## Microservicios incluidos\n\n1. **Identity Service** (`:8000` vía Gateway) — autenticación con JWT\n2. **Event Ingestion** (`:8002`) — recepción de eventos LMS\n3. **Telemetry Processing** (`:8003`) — métricas agregadas\n4. **Alerting Service** (`:8004`) — reglas e incidentes\n5. **Notification Dispatcher** (`:8005`) — notificaciones multi-canal\n\n## Cómo usar\n\n1. Selecciona el environment **Learning Analytics - Local**\n2. Ejecuta **Auth → Login (admin)** — el JWT se guarda automáticamente en la variable `JWT_TOKEN`\n3. El resto de requests usa `{{JWT_TOKEN}}` automáticamente\n\n## Casos de uso pre-armados\n\nEn la carpeta **🧪 Demo Flows** hay secuencias de 3-5 requests que ejercitan flujos completos (ej: disparar incidente y consultar notificaciones generadas).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "🔑 Auth (Identity Service)",
+      "description": "Autenticación JWT. El login guarda el token en la variable `JWT_TOKEN` automáticamente.",
+      "item": [
+        {
+          "name": "Login (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.token) {",
+                  "    pm.environment.set('JWT_TOKEN', data.token);",
+                  "    console.log('✓ JWT_TOKEN guardado:', data.token.substring(0, 20) + '...');",
+                  "  }",
+                  "  if (data.user && data.user.id) {",
+                  "    pm.environment.set('USER_ID', data.user.id);",
+                  "  }",
+                  "}",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Token present', () => pm.expect(pm.response.json()).to.have.property('token'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@learning.test\",\n  \"password\": \"password\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_GATEWAY}}/api/auth/login",
+              "host": ["{{BASE_GATEWAY}}"],
+              "path": ["api", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Login (docente)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.environment.set('JWT_TOKEN', pm.response.json().token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"docente@learning.test\",\n  \"password\": \"password\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_GATEWAY}}/api/auth/login",
+              "host": ["{{BASE_GATEWAY}}"],
+              "path": ["api", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Login (estudiante)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.environment.set('JWT_TOKEN', pm.response.json().token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"estudiante@learning.test\",\n  \"password\": \"password\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_GATEWAY}}/api/auth/login",
+              "host": ["{{BASE_GATEWAY}}"],
+              "path": ["api", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Get current user (me)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{JWT_TOKEN}}" }
+            ],
+            "url": {
+              "raw": "{{BASE_GATEWAY}}/api/auth/me",
+              "host": ["{{BASE_GATEWAY}}"],
+              "path": ["api", "auth", "me"]
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{JWT_TOKEN}}" }
+            ],
+            "url": {
+              "raw": "{{BASE_GATEWAY}}/api/auth/logout",
+              "host": ["{{BASE_GATEWAY}}"],
+              "path": ["api", "auth", "logout"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📥 Event Ingestion",
+      "description": "Recepción de eventos LMS. Cada endpoint aplica un Anti-Corruption Layer específico que normaliza el payload al modelo canónico antes de publicar a Kafka.",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_INGESTION}}/api/health",
+              "host": ["{{BASE_INGESTION}}"],
+              "path": ["api", "health"]
+            }
+          }
+        },
+        {
+          "name": "Ingest Moodle event (course_viewed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Institution-Id", "value": "{{INSTITUTION_ID}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventname\": \"\\\\core\\\\event\\\\course_viewed\",\n  \"userid\": 42,\n  \"courseid\": 7,\n  \"timecreated\": {{$timestamp}}\n}"
+            },
+            "url": {
+              "raw": "{{BASE_INGESTION}}/api/events/moodle",
+              "host": ["{{BASE_INGESTION}}"],
+              "path": ["api", "events", "moodle"]
+            }
+          }
+        },
+        {
+          "name": "Ingest Canvas event",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Institution-Id", "value": "{{INSTITUTION_ID}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_name\": \"assignment_submitted\",\n  \"user_id\": 42,\n  \"context_id\": 7,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_INGESTION}}/api/events/canvas",
+              "host": ["{{BASE_INGESTION}}"],
+              "path": ["api", "events", "canvas"]
+            }
+          }
+        },
+        {
+          "name": "Ingest Open edX event",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Institution-Id", "value": "{{INSTITUTION_ID}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_type\": \"problem_check\",\n  \"username\": \"student42\",\n  \"course_id\": \"course-v1:UNAB+CS101+2026\",\n  \"time\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_INGESTION}}/api/events/openedx",
+              "host": ["{{BASE_INGESTION}}"],
+              "path": ["api", "events", "openedx"]
+            }
+          }
+        },
+        {
+          "name": "Get recent events",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_INGESTION}}/api/events/recent?limit=10",
+              "host": ["{{BASE_INGESTION}}"],
+              "path": ["api", "events", "recent"],
+              "query": [
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📊 Telemetry Processing",
+      "description": "Métricas agregadas. Ventanas de 1 minuto calculadas por el worker de telemetría sobre los eventos consumidos de Kafka.",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_TELEMETRY}}/api/health",
+              "host": ["{{BASE_TELEMETRY}}"],
+              "path": ["api", "health"]
+            }
+          }
+        },
+        {
+          "name": "Metrics summary (KPIs globales)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_TELEMETRY}}/api/metrics/summary",
+              "host": ["{{BASE_TELEMETRY}}"],
+              "path": ["api", "metrics", "summary"]
+            }
+          }
+        },
+        {
+          "name": "Metrics windows (últimas 50)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_TELEMETRY}}/api/metrics/windows?limit=50",
+              "host": ["{{BASE_TELEMETRY}}"],
+              "path": ["api", "metrics", "windows"],
+              "query": [
+                { "key": "limit", "value": "50" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Metrics by LMS",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_TELEMETRY}}/api/metrics/by-lms",
+              "host": ["{{BASE_TELEMETRY}}"],
+              "path": ["api", "metrics", "by-lms"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "🚨 Alerting Service",
+      "description": "Reglas de detección e incidentes. Las reglas pueden ser stream (R1, R2) o batch (R3).",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_ALERTING}}/api/health",
+              "host": ["{{BASE_ALERTING}}"],
+              "path": ["api", "health"]
+            }
+          }
+        },
+        {
+          "name": "List rules",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_ALERTING}}/api/rules",
+              "host": ["{{BASE_ALERTING}}"],
+              "path": ["api", "rules"]
+            }
+          }
+        },
+        {
+          "name": "Toggle rule active/inactive",
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{BASE_ALERTING}}/api/rules/1/toggle-active",
+              "host": ["{{BASE_ALERTING}}"],
+              "path": ["api", "rules", "1", "toggle-active"]
+            }
+          }
+        },
+        {
+          "name": "List all incidents",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.incidents && data.incidents.length > 0) {",
+                  "    pm.environment.set('LAST_INCIDENT_ID', data.incidents[0].incident_id);",
+                  "    console.log('✓ LAST_INCIDENT_ID guardado:', data.incidents[0].incident_id);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_ALERTING}}/api/incidents",
+              "host": ["{{BASE_ALERTING}}"],
+              "path": ["api", "incidents"]
+            }
+          }
+        },
+        {
+          "name": "List critical incidents (filter)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_ALERTING}}/api/incidents?severity=critical&status=notified",
+              "host": ["{{BASE_ALERTING}}"],
+              "path": ["api", "incidents"],
+              "query": [
+                { "key": "severity", "value": "critical" },
+                { "key": "status", "value": "notified" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get incident by ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_ALERTING}}/api/incidents/{{LAST_INCIDENT_ID}}",
+              "host": ["{{BASE_ALERTING}}"],
+              "path": ["api", "incidents", "{{LAST_INCIDENT_ID}}"]
+            }
+          }
+        },
+        {
+          "name": "Acknowledge incident",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"acknowledged_by\": \"admin@learning.test\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_ALERTING}}/api/incidents/{{LAST_INCIDENT_ID}}/acknowledge",
+              "host": ["{{BASE_ALERTING}}"],
+              "path": ["api", "incidents", "{{LAST_INCIDENT_ID}}", "acknowledge"]
+            }
+          }
+        },
+        {
+          "name": "Resolve incident",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resolved_by\": \"admin@learning.test\",\n  \"resolution_notes\": \"Resuelto manualmente desde Postman para demo.\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_ALERTING}}/api/incidents/{{LAST_INCIDENT_ID}}/resolve",
+              "host": ["{{BASE_ALERTING}}"],
+              "path": ["api", "incidents", "{{LAST_INCIDENT_ID}}", "resolve"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "🔔 Notification Dispatcher",
+      "description": "Notificaciones multi-canal disparadas por incidentes. Consumer RabbitMQ del exchange 'alerts'.",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_NOTIFICATION}}/api/health",
+              "host": ["{{BASE_NOTIFICATION}}"],
+              "path": ["api", "health"]
+            }
+          }
+        },
+        {
+          "name": "Recent notifications (last 20)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_NOTIFICATION}}/api/notifications/recent?limit=20",
+              "host": ["{{BASE_NOTIFICATION}}"],
+              "path": ["api", "notifications", "recent"],
+              "query": [
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Recent failed notifications",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_NOTIFICATION}}/api/notifications/recent?status=failed",
+              "host": ["{{BASE_NOTIFICATION}}"],
+              "path": ["api", "notifications", "recent"],
+              "query": [
+                { "key": "status", "value": "failed" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Recent email notifications",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_NOTIFICATION}}/api/notifications/recent?channel=email&limit=10",
+              "host": ["{{BASE_NOTIFICATION}}"],
+              "path": ["api", "notifications", "recent"],
+              "query": [
+                { "key": "channel", "value": "email" },
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Notification stats (agregados)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_NOTIFICATION}}/api/notifications/stats",
+              "host": ["{{BASE_NOTIFICATION}}"],
+              "path": ["api", "notifications", "stats"]
+            }
+          }
+        },
+        {
+          "name": "Notifications by incident",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_NOTIFICATION}}/api/notifications/by-incident/{{LAST_INCIDENT_ID}}",
+              "host": ["{{BASE_NOTIFICATION}}"],
+              "path": ["api", "notifications", "by-incident", "{{LAST_INCIDENT_ID}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "🧪 Demo Flows (casos de uso)",
+      "description": "Secuencias de requests que ejercitan flujos completos del sistema. Ejecutar en orden de arriba a abajo.",
+      "item": [
+        {
+          "name": "Flujo A: Disparar incidente R1 (15 eventos burst)",
+          "description": "Envía 15 eventos seguidos para el mismo estudiante. Dispara la regla R1 (critical) por exceso de actividad sostenida. Después de ejecutar, esperar ~10s y consultar 'List all incidents' para ver el incidente generado.",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Institution-Id", "value": "{{INSTITUTION_ID}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventname\": \"\\\\core\\\\event\\\\course_viewed\",\n  \"userid\": 42,\n  \"courseid\": 7,\n  \"timecreated\": {{$timestamp}}\n}"
+            },
+            "url": {
+              "raw": "{{BASE_INGESTION}}/api/events/moodle",
+              "host": ["{{BASE_INGESTION}}"],
+              "path": ["api", "events", "moodle"]
+            }
+          }
+        },
+        {
+          "name": "Flujo A.2: Validar incidente generado",
+          "description": "Después de Flujo A (ejecutarlo ~15 veces dándole F5 rápido al botón Send), consultar este endpoint para ver el incidente disparado.",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_ALERTING}}/api/incidents?severity=critical",
+              "host": ["{{BASE_ALERTING}}"],
+              "path": ["api", "incidents"],
+              "query": [
+                { "key": "severity", "value": "critical" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Flujo A.3: Validar notificaciones generadas",
+          "description": "Cada incidente genera 3 notificaciones (email + slack + log). Verificar aquí.",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_NOTIFICATION}}/api/notifications/recent?limit=10",
+              "host": ["{{BASE_NOTIFICATION}}"],
+              "path": ["api", "notifications", "recent"],
+              "query": [
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Flujo B.1: Acknowledge último incidente",
+          "description": "Después de listar incidentes, este request reconoce el último (usa variable LAST_INCIDENT_ID auto-poblada).",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"acknowledged_by\": \"admin@learning.test\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_ALERTING}}/api/incidents/{{LAST_INCIDENT_ID}}/acknowledge",
+              "host": ["{{BASE_ALERTING}}"],
+              "path": ["api", "incidents", "{{LAST_INCIDENT_ID}}", "acknowledge"]
+            }
+          }
+        },
+        {
+          "name": "Flujo B.2: Resolver incidente",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resolved_by\": \"admin@learning.test\",\n  \"resolution_notes\": \"Estudiante contactado, situación clarificada.\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_ALERTING}}/api/incidents/{{LAST_INCIDENT_ID}}/resolve",
+              "host": ["{{BASE_ALERTING}}"],
+              "path": ["api", "incidents", "{{LAST_INCIDENT_ID}}", "resolve"]
+            }
+          }
+        },
+        {
+          "name": "Flujo C: Health check todos los servicios",
+          "description": "Ejecuta health en los 5 servicios en orden. Útil al inicio de la demo para mostrar que todo está vivo.",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{BASE_INGESTION}}/api/health",
+              "host": ["{{BASE_INGESTION}}"],
+              "path": ["api", "health"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
